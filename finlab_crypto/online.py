@@ -131,9 +131,10 @@ class TradingPortfolio():
         binance_secret: A str of is binance authorization secret.
 
     """
-    def __init__(self, binance_key, binance_secret, execute_before_candle_complete=False):
+    def __init__(self, binance_key, binance_secret, trading_type='spot', execute_before_candle_complete=False):
         self._client = Client(api_key=binance_key, api_secret=binance_secret)
         self._trading_methods = []
+        self._trading_type = trading_type # spot or futures
         self._margins = {}
         self.ticker_info = TickerInfo(self._client)
         self.default_stable_coin = 'USDT'
@@ -560,48 +561,76 @@ class TradingPortfolio():
         Returns:
             A dataframe of trades.
         """
-        def cancel_orders(symbol):
-            orders = self._client.get_open_orders(symbol=symbol)
-            for o in orders:
-                self._client.cancel_order(symbol=symbol, orderId=o['orderId'])
 
-        order_func = self._client.create_order if mode == 'MARKET' or mode == 'LIMIT' else self._client.create_test_order
+        if self._trading_type == 'futures' :
+            order_func = self._client.futures_create_order
+            cancel_func = self._client.futures_cancel_order
+            get_open_orders = self._client.futures_get_open_orders
+            set_leverage = self._client.futures_change_leverage
+        else:
+            order_func = self._client.create_order if mode == 'MARKET' or mode == 'LIMIT' else self._client.create_test_order
+            cancel_func = self._client.cancel_order
+            get_open_orders = self._client.get_open_orders
+
+
+        def cancel_orders(symbol):
+            try:
+                orders = get_open_orders(symbol=symbol)
+                for o in orders:
+                    cancel_func(symbol=symbol, orderId=o['orderId'])
+            except Exception as e:
+                print(f'| Error cancelling orders for {symbol}: {str(e)}')
+        
 
         print('|---------EXECUTION LOG----------|')
         print('| time: ', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
         trades = {}
-        for s, lot in transactions.final_value.items():
+        for s, row in transactions.iterrows():
+            symbol = s
+            final_value = row['final_value']
+            price = row.get('price', None)
+            leverage = row.get('leverage', 1)  # 預設槓桿倍數為 1
+            
+            cancel_orders(symbol)
 
-            cancel_orders(s)
-
-            if lot == 0:
+            if final_value == 0:
                 continue
 
-            side = SIDE_BUY if lot > 0 else SIDE_SELL
-            try:
-                args = dict(
-                    side=side,
-                    type=ORDER_TYPE_MARKET,
-                    symbol=s,
-                    quantity=abs(lot))
+            side = SIDE_BUY if final_value > 0 else SIDE_SELL
+            quantity = abs(final_value)
 
-                if mode == 'LIMIT':
-                    args['price'] = transactions.price.loc[s]
+            # 設置槓桿（僅適用於合約交易）
+            if self._trading_type == 'futures':
+                try:
+                    set_leverage(symbol=symbol, leverage=leverage)
+                except Exception as e:
+                    print(f"| Error setting leverage for {symbol}: {str(e)}")
+                    continue
+
+            try:
+                # 構建訂單參數
+                args = {
+                    'symbol': symbol,
+                    'side': side,
+                    'type': ORDER_TYPE_MARKET,
+                    'quantity': quantity,
+                }
+
+                # 如果是限價訂單，加入價格參數
+                if mode == 'LIMIT' and price is not None:
+                    args['price'] = price
                     args['type'] = ORDER_TYPE_LIMIT
                     args['timeInForce'] = 'GTC'
 
-                order_func(**args)
-                order_result = 'success'
-                print('|', mode, s, side, abs(lot), order_result)
-            except Exception as e:
-                print('| FAIL', s, s, side, abs(lot), str(e))
-                order_result = 'FAIL: ' + str(e)
+                # 執行訂單
+                order_result = order_func(**args)
+                print(f"| {mode} Order: {symbol} {side} {quantity} => Success")
+                trades[symbol] = {**args, 'result': 'success'}
 
-            trades[s] = {
-                **args,
-                'result': order_result,
-            }
+            except Exception as e:
+                print(f"| FAIL {symbol} {side} {quantity}: {str(e)}")
+                trades[symbol] = {**args, 'result': f'FAIL: {str(e)}'}
 
         return pd.DataFrame(trades).transpose()
 
