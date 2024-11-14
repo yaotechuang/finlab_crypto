@@ -600,14 +600,6 @@ class TradingPortfolio():
             side = SIDE_BUY if final_value > 0 else SIDE_SELL
             quantity = abs(final_value)
 
-            # 設置槓桿（僅適用於合約交易）
-            if self._trading_type == 'futures':
-                try:
-                    set_leverage(symbol=symbol, leverage=leverage)
-                except Exception as e:
-                    print(f"| Error setting leverage for {symbol}: {str(e)}")
-                    continue
-
             try:
                 # 構建訂單參數
                 args = {
@@ -616,6 +608,15 @@ class TradingPortfolio():
                     'type': ORDER_TYPE_MARKET,
                     'quantity': quantity,
                 }
+
+                # 設置槓桿（僅適用於合約交易）
+                if self._trading_type == 'futures':
+                    try:
+                        args['reduceOnly'] = True if self._trading_type == 'futures' and side == SIDE_SELL else False
+                        set_leverage(symbol=symbol, leverage=leverage)
+                    except Exception as e:
+                        print(f"| Error setting leverage for {symbol}: {str(e)}")
+                        continue
 
                 # 如果是限價訂單，加入價格參數
                 if mode == 'LIMIT' and price is not None:
