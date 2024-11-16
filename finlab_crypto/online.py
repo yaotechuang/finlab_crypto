@@ -567,6 +567,7 @@ class TradingPortfolio():
             cancel_func = self._client.futures_cancel_order
             get_open_orders = self._client.futures_get_open_orders
             set_leverage = self._client.futures_change_leverage
+            set_margin_type = self._client.futures_change_margin_type
         else:
             order_func = self._client.create_order if mode == 'MARKET' or mode == 'LIMIT' else self._client.create_test_order
             cancel_func = self._client.cancel_order
@@ -590,7 +591,8 @@ class TradingPortfolio():
             symbol = s
             final_value = row['final_value']
             price = row.get('price', None)
-            leverage = row.get('leverage', 1)  # 預設槓桿倍數為 1
+            leverage = int(row.get('leverage', 1))  # 預設槓桿倍數為 1
+            margin_type = row.get('margin_type', 'ISOLATED') # ISOLATED or CROSSED
             
             cancel_orders(symbol)
 
@@ -614,9 +616,13 @@ class TradingPortfolio():
                     try:
                         args['reduceOnly'] = True if self._trading_type == 'futures' and side == SIDE_SELL else False
                         set_leverage(symbol=symbol, leverage=leverage)
+                        set_margin_type(symbol=symbol, marginType=margin_type)
                     except Exception as e:
-                        print(f"| Error setting leverage for {symbol}: {str(e)}")
-                        continue
+                        if "No need to change margin type" in str(e):
+                            print(f"{symbol} margin type is already set to {margin_type}.")
+                        else:
+                            print(f"| Error setting futures args for {symbol}: {str(e)}")
+                            continue
 
                 # 如果是限價訂單，加入價格參數
                 if mode == 'LIMIT' and price is not None:
