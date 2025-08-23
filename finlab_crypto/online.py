@@ -268,6 +268,7 @@ class TradingPortfolio():
 
                 signal = result.cash().iloc[-1] == 0
                 return_ = 0
+                order_count = 0
 
                 # find weight if it is in the nested dictionary
                 weight = method.weight
@@ -282,6 +283,7 @@ class TradingPortfolio():
                 if signal:
                     txn = result.positions.records
                     rds = result.orders.records
+                    order_count = len(rds)
                     return_ = ohlcv[trade_price_type].iloc[-1] / rds['price'].iloc[-1] - 1
                     entry_price = rds['price'].iloc[-1]
                     entry_time = ohlcv.index[int(rds.iloc[-1]['idx'])]
@@ -335,6 +337,7 @@ class TradingPortfolio():
                     'latest_price': ohlcv[trade_price_type].iloc[-1],
                     'entry_price': entry_price,
                     'entry_time': entry_time,
+                    'order_count': int(order_count),
                     'html': htmlname,
                 })
 
@@ -375,14 +378,15 @@ class TradingPortfolio():
         # get position
         position = pd.Series({i['asset']: i['free'] for i in self.ticker_info.info['balances']
                               if float(i['free']) != 0}).astype(float)
+        position.index = position.index.astype(str)
         position = position[position.index.str[:2] != 'LD']
 
         # refine asset index
         all_assets = base_asset_value.index.union(quote_asset_value.index).union(position.index)
 
-        base_asset_value = base_asset_value.reindex(all_assets).fillna(0)
-        quote_asset_value = quote_asset_value.reindex(all_assets).fillna(0)
-        position = position.reindex(all_assets).fillna(0)
+        base_asset_value = base_asset_value.reindex(all_assets).fillna(0).infer_objects(copy=False)
+        quote_asset_value = quote_asset_value.reindex(all_assets).fillna(0).infer_objects(copy=False)
+        position = position.reindex(all_assets).fillna(0).infer_objects(copy=False)
 
         # calculate algo value
         algo_value_in_btc = base_asset_value + quote_asset_value
@@ -390,7 +394,7 @@ class TradingPortfolio():
         algo_value = algo_value_in_btc / asset_price_in_btc
 
         # calculate diffierence
-        margin_position = pd.Series(self._margins).reindex(all_assets).fillna(0)
+        margin_position = pd.Series(self._margins, dtype='float64').reindex(all_assets).fillna(0)
 
         diff_value_btc = pd.DataFrame({
             'algo_p': algo_value_in_btc,
@@ -459,7 +463,9 @@ class TradingPortfolio():
         if self.default_stable_coin in transaction_btc.index:
             transaction_btc.pop(self.default_stable_coin+self.default_stable_coin)
         
-        transaction_btc = pd.concat([transaction_btc, pd.Series(txn_btc)])
+        parts = [transaction_btc, pd.Series(txn_btc)]
+        parts = [p for p in parts if p is not None and len(p) > 0]
+        transaction_btc = pd.concat(parts) if parts else transaction_btc
 
         transaction = transaction_btc.to_frame(name='value_in_btc')
 
@@ -477,7 +483,7 @@ class TradingPortfolio():
         def asset_distributed(v):
             asset_increase = v.value_in_btc.groupby(v.base_asset).sum()
             asset_decrease = v.value_in_btc.groupby(v.quote_asset).sum()
-            return asset_increase.reindex(all_assets).fillna(0) - asset_decrease.reindex(all_assets).fillna(0)
+            return asset_increase.reindex(all_assets).fillna(0).infer_objects(copy=False) - asset_decrease.reindex(all_assets).fillna(0).infer_objects(copy=False)
 
         verify_assets = asset_distributed(transaction)
         verify_assets = verify_assets[verify_assets != 0]
