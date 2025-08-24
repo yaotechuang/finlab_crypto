@@ -20,10 +20,21 @@ class TickerInfo():
         client: A Binance client object where api_key, api_secret is required.
 
     """
-    def __init__(self, client):
+    def __init__(self, client, trading_type='spot'):
         self.exinfo = client.get_exchange_info()
-        self.info = client.get_account()
         self.tickers = client.get_symbol_ticker()
+        self.trading_type = trading_type
+        
+        if trading_type == 'futures':
+            try:
+                self.info = client.futures_account()
+                self.positions = client.futures_position_information()
+            except Exception as e:
+                self.info = client.get_account()  # 降級到現貨帳戶
+                self.positions = None
+        else:
+            self.info = client.get_account()
+            self.positions = None
 
     @staticmethod
     def _list_select(list, key, value):
@@ -136,7 +147,7 @@ class TradingPortfolio():
         self._trading_methods = []
         self._trading_type = trading_type # spot or futures
         self._margins = {}
-        self.ticker_info = TickerInfo(self._client)
+        self.ticker_info = TickerInfo(self._client, trading_type)  # 傳遞 trading_type
         self.default_stable_coin = 'USDT'
         self.execute_before_candle_complete = execute_before_candle_complete
 
@@ -375,9 +386,20 @@ class TradingPortfolio():
         base_asset_value = base_asset_value.groupby(level=0).sum()
         quote_asset_value = quote_asset_value.groupby(level=0).sum()
 
-        # get position
-        position = pd.Series({i['asset']: i['free'] for i in self.ticker_info.info['balances']
-                              if float(i['free']) != 0}).astype(float)
+        # get position - 根據交易類型獲取不同的倉位信息
+        if self._trading_type == 'futures' and hasattr(self.ticker_info, 'positions') and self.ticker_info.positions:
+            # 合約帳戶：從 positions 獲取
+            position = pd.Series({
+                pos['symbol'].replace('USDT', '') if pos['symbol'].endswith('USDT') else pos['symbol']: 
+                float(pos['positionAmt']) 
+                for pos in self.ticker_info.positions 
+                if float(pos['positionAmt']) != 0
+            }).astype(float)
+        else:
+            # 現貨帳戶：從 balances 獲取
+            position = pd.Series({i['asset']: i['free'] for i in self.ticker_info.info['balances']
+                                  if float(i['free']) != 0}).astype(float)
+        
         position.index = position.index.astype(str)
         position = position[position.index.str[:2] != 'LD']
 
@@ -406,6 +428,8 @@ class TradingPortfolio():
         })
         diff_value_btc['rebalance'] = diff_value_btc['difference'].abs() > diff_value_btc['rebalance_threshold']
         diff_value_btc.loc[quote_asset_list, 'rebalance'] = True
+
+        # 調試日誌已移除，保持代碼整潔
 
         # excluding checking of asset positions
 
