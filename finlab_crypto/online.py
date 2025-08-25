@@ -397,8 +397,12 @@ class TradingPortfolio():
             }).astype(float)
         else:
             # 現貨帳戶：從 balances 獲取
-            position = pd.Series({i['asset']: i['free'] for i in self.ticker_info.info['balances']
-                                  if float(i['free']) != 0}).astype(float)
+            if 'balances' in self.ticker_info.info:
+                position = pd.Series({i['asset']: i['free'] for i in self.ticker_info.info['balances']
+                                      if float(i['free']) != 0}).astype(float)
+            else:
+                # 期貨帳戶但沒有 positions 時的備用方案
+                position = pd.Series(dtype=float)
         
         position.index = position.index.astype(str)
         position = position[position.index.str[:2] != 'LD']
