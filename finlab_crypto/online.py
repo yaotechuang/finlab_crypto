@@ -597,7 +597,7 @@ class TradingPortfolio():
         """
 
         if self._trading_type == 'futures' :
-            order_func = self._client.futures_create_order
+            order_func = self._client.futures_create_order if mode == 'MARKET' or mode == 'LIMIT' else self._client.futures_create_test_order
             cancel_func = self._client.futures_cancel_order
             get_open_orders = self._client.futures_get_open_orders
             set_leverage = self._client.futures_change_leverage
@@ -638,6 +638,10 @@ class TradingPortfolio():
 
             try:
                 # 構建訂單參數
+                # 檢查是否有止盈止損參數
+                tp_percent = row.get("takeProfitPercent", None)
+                sl_percent = row.get("stopLossPercent", None)
+                
                 args = {
                     'symbol': symbol,
                     'side': side,
@@ -664,10 +668,62 @@ class TradingPortfolio():
                     args['type'] = ORDER_TYPE_LIMIT
                     args['timeInForce'] = 'GTC'
 
+                # 加入止盈止損參數（如果有的話）
+                if tp_percent is not None:
+                    # 計算止盈價格：當前價格 × (1 + 止盈百分比)
+                    current_price = float(row.get('price', 0))
+                    if current_price > 0:
+                        take_profit_price = current_price * (1 + tp_percent / 100)
+                        args["takeProfit"] = round(take_profit_price, 8)
+                        print(f"| {symbol} 設定止盈價格: {take_profit_price:.8f}")
+                
+                if sl_percent is not None:
+                    # 計算止損價格：當前價格 × (1 - 止損百分比)
+                    current_price = float(row.get('price', 0))
+                    if current_price > 0:
+                        stop_loss_price = current_price * (1 - sl_percent / 100)
+                        args["stopLoss"] = round(stop_loss_price, 8)
+                        print(f"| {symbol} 設定止損價格: {stop_loss_price:.8f}")
+                
                 # 執行訂單
                 order_result = order_func(**args)
                 print(f"| {mode} Order: {symbol} {side} {quantity} => Success")
                 trades[symbol] = {**args, 'result': 'success'}
+                
+                # 🔧 如果止盈止損參數無效，嘗試分步驟設定
+                if self._trading_type == 'futures' and final_value > 0:
+                    try:
+                        # 獲取訂單ID
+                        order_id = order_result.get('orderId')
+                        if order_id and (tp_percent is not None or sl_percent is not None):
+                            print(f"| {symbol} 嘗試分步驟設定止盈止損...")
+                            
+                            # 設定止盈
+                            if tp_percent is not None and current_price > 0:
+                                take_profit_price = current_price * (1 + tp_percent / 100)
+                                tp_order = self._client.futures_create_order(
+                                    symbol=symbol,
+                                    side='SELL',
+                                    type='TAKE_PROFIT_MARKET',
+                                    stopPrice=round(take_profit_price, 8),
+                                    closePosition='true'
+                                )
+                                print(f"| {symbol} 止盈訂單設定成功: {take_profit_price:.8f}")
+                            
+                            # 設定止損
+                            if sl_percent is not None and current_price > 0:
+                                stop_loss_price = current_price * (1 - sl_percent / 100)
+                                sl_order = self._client.futures_create_order(
+                                    symbol=symbol,
+                                    side='SELL',
+                                    type='STOP_MARKET',
+                                    stopPrice=round(stop_loss_price, 8),
+                                    closePosition='true'
+                                )
+                                print(f"| {symbol} 止損訂單設定成功: {stop_loss_price:.8f}")
+                                
+                    except Exception as e:
+                        print(f"| {symbol} 分步驟設定止盈止損失敗: {e}")
 
             except Exception as e:
                 print(f"| FAIL {symbol} {side} {quantity}: {str(e)}")
