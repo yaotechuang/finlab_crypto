@@ -355,9 +355,6 @@ class Strategy(object):
 
         entries, exits = self._add_stops(ohlcv_lookback, entries, exits, stop_vars)
 
-        if signals:
-            return entries, exits, fig_data
-
         if side == 'long':
 
             if not compounded:
@@ -390,4 +387,7 @@ class Strategy(object):
             plt.show()
             variable_visualization(portfolio)
 
-        return portfolio
+        if signals:
+            return entries, exits, fig_data, portfolio
+        else:
+            return portfolio

@@ -272,10 +272,13 @@ class TradingPortfolio():
                     ohlcv = ohlcv.loc[:t-delta_t]
 
                 htmlname = f'{symbol}-{method.freq}-{method.name}.html' if html else None
-                result = method.strategy.backtest(ohlcv,
-                                                  method.variables, filters=method.filters, plot=html,
-                                                  html=htmlname,
-                                                  freq=method.freq, fees=0., slippage=0., execution_price=method.execution_price)
+                
+                # 使用修改後的 backtest 方法，同時獲取訊號和 portfolio
+                entries, exits, fig_data, result = method.strategy.backtest(ohlcv,
+                                                                           method.variables, filters=method.filters, 
+                                                                           signals=True, plot=html, html=htmlname,
+                                                                           freq=method.freq, fees=0., slippage=0., 
+                                                                           execution_price=method.execution_price)
 
                 signal = result.cash().iloc[-1] == 0
                 return_ = 0
@@ -293,8 +296,8 @@ class TradingPortfolio():
                 trade_price_type = method.execution_price
                 if signal:
                     txn = result.positions.records
-                    rds = result.orders.records
-                    order_count = len(rds)
+                    rds = result.orders.records 
+                    order_count = len(entries[entries])  # 使用 entries[entries] 計算真正的訊號次數
                     return_ = ohlcv[trade_price_type].iloc[-1] / rds['price'].iloc[-1] - 1
                     entry_price = rds['price'].iloc[-1]
                     entry_time = ohlcv.index[int(rds.iloc[-1]['idx'])]
